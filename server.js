@@ -14,11 +14,6 @@ server.listen(port, function () {
 });
 
 // Routing
-// var bodyParser = require('body-parser');
-// app.use(bodyParser.urlencoded({extended: false}));
-// app.use(bodyParser.json());
-// console.log('hi',app)
-// app.listen(3001);
 app.use(express.static('public'));
 
 // Chatroom
@@ -27,7 +22,6 @@ var numUsers = 0;
 
 // setup our datastore
 var connected=false;
-// var datastore = require("./datastore").sync;
 var datastore = require("./datastore").async;
 
 
@@ -49,11 +43,9 @@ io.on('connection', function (socket) {
       // Get the existing posts from the MongoDB and put it into an array called posts
       var chats = datastore.get("chats")
         .then(function(chats){
-          // console.log('chats so far', chats)
           chats.push(item); // the form data is in request.body because we're using the body-parser library to help make dealing with requests easier
           // We store the updated posts array back in our database posts entry
           datastore.set("chats", chats)
-          // console.log('logging', item)
         });
     } catch (err) {
       console.log('error in logging', item)
@@ -134,11 +126,7 @@ io.on('connection', function (socket) {
 
 
 function handleError(err, response) {
-  // response.status(500);
-  // response.send(
-  //   "<html><head><title>Internal Server Error!</title></head><body><pre>"
-  //   + JSON.stringify(err, null, 2) + "</pre></body></pre>"
-  // );
+  //no error handling for now
 }
 
 // ------------------------
@@ -160,9 +148,7 @@ function initializeDatastoreOnProjectCreation() {
   return new Promise(function (resolving) {
     datastore.get("initialized")
       .then(function(init){
-          // console.log('init',init)
         if (!init) {
-          // console.log('initializingchatss')
           datastore.set("chats", initialChats)
             .then(function(){
               datastore.set("initialized", true)
@@ -180,11 +166,15 @@ function initializeDatastoreOnProjectCreation() {
 var initialChats = [
   {
     username: "User1",
-    message: "Among other things, you could make a pretty sweet blog."
+    message: "You can chat anything here."
   },
   {
     username: "User2",
-    message: "Today I saw a double rainbow. It was pretty neat."
+    message: "Anything you type on another device immediately updates all clients."
+  },
+  {
+    username: "User3",
+    message: "And Persists!"
   }
 ];
 
