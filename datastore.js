@@ -214,8 +214,11 @@ function connectSync() {
 }
 
 function initializeApp(app) {
+  console.log('app',app)
   app.use(function (req, res, next) {
+    console.log('fiber')
     sync.fiber(next);
+    console.log('next',next)
   });
 }
 

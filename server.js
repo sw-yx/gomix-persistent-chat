@@ -5,98 +5,187 @@
 // setup express for handling http requests
 var express = require("express");
 var app = express();
-var bodyParser = require('body-parser');
-app.use(bodyParser.urlencoded({extended: false}));
-app.use(bodyParser.json());
-app.use(express.static('public')); // http://expressjs.com/en/starter/static-files.html
-var connected=false;
-app.listen(3000);
-console.log('Listening on port 3000');
-    
-// setup nunjucks for templating in views/index.html
-var nunjucks = require('nunjucks');
-nunjucks.configure('views', { autoescape: true, express: app });
+var server = require('http').createServer(app);
+var io = require('socket.io')(server);
+var port = process.env.PORT || 3000;
+
+server.listen(port, function () {
+  console.log('Server listening at port %d', port);
+});
+
+// Routing
+// var bodyParser = require('body-parser');
+// app.use(bodyParser.urlencoded({extended: false}));
+// app.use(bodyParser.json());
+// console.log('hi',app)
+// app.listen(3001);
+app.use(express.static('public'));
+
+// Chatroom
+
+var numUsers = 0;
 
 // setup our datastore
-var datastore = require("./datastore").sync;
-datastore.initializeApp(app);
+var connected=false;
+// var datastore = require("./datastore").sync;
+var datastore = require("./datastore").async;
 
-// create routes
-app.get("/", function (request, response) {
-  try {
-    initializeDatastoreOnProjectCreation();
-    var posts = datastore.get("posts");
-    response.render('index.html', {
-      title: "Welcome!",
-      posts: posts.reverse()
+
+io.on('connection', function (socket) {
+  var addedUser = false;
+
+  // when the client emits 'new message', this listens and executes
+  socket.on('new message', function (data) {
+    // we tell the client to execute 'new message'
+    socket.broadcast.emit('new message', {
+      username: socket.username,
+      message: data
     });
-  } catch (err) {
-    console.log("Error: " + err);
-    handleError(err, response);
-  }
+    var item = {
+            username: socket.username ? socket.username : "Anon.",
+            message: data
+          }
+    try {
+      // Get the existing posts from the MongoDB and put it into an array called posts
+      var chats = datastore.get("chats")
+        .then(function(chats){
+          // console.log('chats so far', chats)
+          chats.push(item); // the form data is in request.body because we're using the body-parser library to help make dealing with requests easier
+          // We store the updated posts array back in our database posts entry
+          datastore.set("chats", chats)
+          // console.log('logging', item)
+        });
+    } catch (err) {
+      console.log('error in logging', item)
+      handleError(err, socket);
+    }
+  });
+
+  // when the client emits 'connect_catchup', this listens and executes
+  socket.on('connect_catchup', function () {
+    try {
+      connectOnProjectCreation()
+        .then(function(){
+          initializeDatastoreOnProjectCreation()
+            .then(function(){
+              datastore.get("chats")
+                .then(function(chats){ 
+                  // console.log('found these chats',chats);
+                  socket.emit('connect_catchup_fromserver', chats);
+                });
+            });        
+        });
+    } catch (err) {
+      console.log("Error: " + err);
+      handleError(err, socket);
+    }
+  });
+  
+  
+  
+  
+  
+  // when the client emits 'add user', this listens and executes
+  socket.on('add user', function (username) {
+    if (addedUser) return;
+
+    // we store the username in the socket session for this client
+    socket.username = username;
+    ++numUsers;
+    addedUser = true;
+    socket.emit('login', {
+      numUsers: numUsers
+    });
+    // echo globally (all clients) that a person has connected
+    socket.broadcast.emit('user joined', {
+      username: socket.username,
+      numUsers: numUsers
+    });
+  });
+
+  // when the client emits 'typing', we broadcast it to others
+  socket.on('typing', function () {
+    socket.broadcast.emit('typing', {
+      username: socket.username
+    });
+  });
+
+  // when the client emits 'stop typing', we broadcast it to others
+  socket.on('stop typing', function () {
+    socket.broadcast.emit('stop typing', {
+      username: socket.username
+    });
+  });
+
+  // when the user disconnects.. perform this
+  socket.on('disconnect', function () {
+    if (addedUser) {
+      --numUsers;
+
+      // echo globally that this client has left
+      socket.broadcast.emit('user left', {
+        username: socket.username,
+        numUsers: numUsers
+      });
+    }
+  });
 });
 
-app.post("/posts", function (request, response) {
-  try {
-    // Get the existing posts from the MongoDB and put it into an array called posts
-    var posts = datastore.get("posts");
-    // We get the contents of the submitted form and append it to the posts array
-    posts.push(request.body); // the form data is in request.body because we're using the body-parser library to help make dealing with requests easier
-    // We store the updated posts array back in our database posts entry
-    datastore.set("posts", posts);
-    // And then we redirect the view back to the homepage
-    response.redirect("/");
-  } catch (err) {
-    handleError(err, response);
-  }
-});
 
-app.get("/reset", function (request, response) {
-  try {
-    datastore.removeMany(["posts", "initialized"]);
-    response.redirect("/");
-  } catch (err) {
-    handleError(err, response);
-  }
-});
-
-app.get("/delete", function (request, response) {
-  try {
-    datastore.set("posts", []);
-    response.redirect("/");
-  } catch (err) {
-    handleError(err, response);
-  }
-});
 
 function handleError(err, response) {
-  response.status(500);
-  response.send(
-    "<html><head><title>Internal Server Error!</title></head><body><pre>"
-    + JSON.stringify(err, null, 2) + "</pre></body></pre>"
-  );
+  // response.status(500);
+  // response.send(
+  //   "<html><head><title>Internal Server Error!</title></head><body><pre>"
+  //   + JSON.stringify(err, null, 2) + "</pre></body></pre>"
+  // );
 }
 
 // ------------------------
 // DATASTORE INITIALIZATION
 
-function initializeDatastoreOnProjectCreation() {
-  if(!connected){
-    connected = datastore.connect();
-  }
-  if (!datastore.get("initialized")) {
-    datastore.set("posts", initialPosts);
-    datastore.set("initialized", true);
-  }  
+function connectOnProjectCreation() {
+  return new Promise(function (resolving) {
+    if(!connected){
+      connected = datastore.connect().then(function(){
+        resolving();
+      });
+    } else {
+      resolving();
+    }
+  });
 }
 
-var initialPosts = [
+function initializeDatastoreOnProjectCreation() {
+  return new Promise(function (resolving) {
+    datastore.get("initialized")
+      .then(function(init){
+          // console.log('init',init)
+        if (!init) {
+          // console.log('initializingchatss')
+          datastore.set("chats", initialChats)
+            .then(function(){
+              datastore.set("initialized", true)
+                .then(function(){
+                  resolving();
+                });
+            });
+        } else {
+          resolving();
+        }
+      });
+  });
+}
+
+var initialChats = [
   {
-    title: "Hello!",
-    body: "Among other things, you could make a pretty sweet blog."
+    username: "User1",
+    message: "Among other things, you could make a pretty sweet blog."
   },
   {
-    title: "Another Post",
-    body: "Today I saw a double rainbow. It was pretty neat."
+    username: "User2",
+    message: "Today I saw a double rainbow. It was pretty neat."
   }
 ];
+
+
